@@ -45,6 +45,7 @@ public:
 		vks::Texture2D lutBrdf;
 		vks::TextureCubeMap irradianceCube;
 		vks::TextureCubeMap prefilteredCube;
+		vks::Texture2D font;
 	} textures;
 
 	struct Models {
@@ -71,29 +72,39 @@ public:
 		float exposure = 4.5f;
 		float gamma = 2.2f;
 		float prefilteredCubeMipLevels;
+		float scaleIBLAmbient = 1.0f;
+		glm::vec4 scaleFGDSpec = glm::vec4(0.0f);
+		glm::vec4 scaleDiffBaseMR = glm::vec4(0.0f);
 	} uboParams;
 
 	VkPipelineLayout pipelineLayout;
+	struct PipelineLayouts {
+		VkPipelineLayout ui;
+	} pipelineLayouts;
 
 	struct Pipelines {
 		VkPipeline skybox;
 		VkPipeline pbr;
 		VkPipeline pbrAlphaBlend;
+		VkPipeline ui;
 	} pipelines;
 
 	struct DescriptorSetLayouts {
 		VkDescriptorSetLayout scene;
 		VkDescriptorSetLayout material;
 		VkDescriptorSetLayout node;
+		VkDescriptorSetLayout ui;
 	} descriptorSetLayouts;
 
 	struct DescriptorSets {
 		VkDescriptorSet scene;
 		VkDescriptorSet skybox;
+		VkDescriptorSet ui;
 	} descriptorSets;
 
-	uint32_t animationIndex = 0;
+	int32_t animationIndex = 0;
 	float animationTimer = 0.0f;
+	bool animate = true;
 
 	float scale = 1.0f;
 	
@@ -121,19 +132,60 @@ public:
 		float alphaMaskCutoff;
 	} pushConstBlockMaterial;
 
+	struct UI {
+		Buffer vertexBuffer;
+		Buffer indexBuffer;
+
+		struct PushConstBlock {
+			glm::vec2 scale;
+			glm::vec2 translate;
+		} pushConstBlock;
+
+		template<typename T>
+		bool checkbox(const char* caption, T *value) {
+			bool val = (*value == 1);
+			bool res = ImGui::Checkbox(caption, &val);
+			*value = val;
+			return res;
+		}
+		bool header(const char *caption) {
+			return ImGui::CollapsingHeader(caption, ImGuiTreeNodeFlags_DefaultOpen);
+		}
+		bool slider(const char* caption, float* value, float min, float max) {
+			return ImGui::SliderFloat(caption, value, min, max);
+		}
+		bool combo(const char *caption, int32_t *itemindex, std::vector<std::string> items) {
+			if (items.empty()) {
+				return false;
+			}
+			std::vector<const char*> charitems;
+			charitems.reserve(items.size());
+			for (size_t i = 0; i < items.size(); i++) {
+				charitems.push_back(items[i].c_str());
+			}
+			uint32_t itemCount = static_cast<uint32_t>(charitems.size());
+			return ImGui::Combo(caption, itemindex, &charitems[0], itemCount, itemCount);
+		}
+		bool button(const char *caption) {
+			return ImGui::Button(caption);
+		}
+		void text(const char *formatstr, ...) {
+			va_list args;
+			va_start(args, formatstr);
+			ImGui::TextV(formatstr, args);
+			va_end(args);
+		}
+	} ui;
+
 	VulkanExample() : VulkanExampleBase()
 	{
 		title = "Vulkan glTF 2.0 PBR";
 		camera.type = Camera::CameraType::lookat;
-
 		camera.setPerspective(45.0f, (float)width / (float)height, 0.1f, 256.0f);
 		camera.rotationSpeed = 0.25f;
 		camera.movementSpeed = 0.1f;
-
 		camera.setPosition({ 0.0f, 0.0f, 2.5f });
 		camera.setRotation({ 0.0f, 0.0f, 0.0f });
-
-		paused = true;
 	}
 
 	~VulkanExample()
@@ -141,11 +193,14 @@ public:
 		vkDestroyPipeline(device, pipelines.skybox, nullptr);
 		vkDestroyPipeline(device, pipelines.pbr, nullptr);
 		vkDestroyPipeline(device, pipelines.pbrAlphaBlend, nullptr);
+		vkDestroyPipeline(device, pipelines.ui, nullptr);
 
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+		vkDestroyPipelineLayout(device, pipelineLayouts.ui, nullptr);
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayouts.scene, nullptr);
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayouts.material, nullptr);
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayouts.node, nullptr);
+		vkDestroyDescriptorSetLayout(device, descriptorSetLayouts.ui, nullptr);
 
 		delete models.scene;
 		delete models.skybox;
@@ -153,12 +208,15 @@ public:
 		uniformBuffers.scene.destroy();
 		uniformBuffers.skybox.destroy();
 		uniformBuffers.params.destroy();
+		ui.vertexBuffer.destroy();
+		ui.indexBuffer.destroy();
 
 		textures.environmentCube.destroy();
 		textures.irradianceCube.destroy();
 		textures.prefilteredCube.destroy();
 		textures.lutBrdf.destroy();
 		textures.empty.destroy();
+		textures.font.destroy();
 	}
 
 	void renderNode(vkglTF::Node *node, VkCommandBuffer commandBuffer, vkglTF::Material::AlphaMode alphaMode) {
@@ -206,20 +264,18 @@ public:
 
 		VkClearValue clearValues[3];
 		if (settings.multiSampling) {
-			clearValues[0].color = { { 0.0f, 0.0f, 0.0f, 1.0f } };
-			clearValues[1].color = { { 0.0f, 0.0f, 0.0f, 1.0f } };
+			clearValues[0].color = { { 0.02f, 0.02f, 0.02f, 1.0f } };
+			clearValues[1].color = { { 0.02f, 0.02f, 0.02f, 1.0f } };
 			clearValues[2].depthStencil = { 1.0f, 0 };
 		}
 		else {
-			clearValues[0].color = { { 0.0f, 0.0f, 0.0f, 1.0f } };
+			clearValues[0].color = { { 0.02f, 0.02f, 0.02f, 1.0f } };
 			clearValues[1].depthStencil = { 1.0f, 0 };
 		}
 
 		VkRenderPassBeginInfo renderPassBeginInfo{};
 		renderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
 		renderPassBeginInfo.renderPass = renderPass;
-		renderPassBeginInfo.renderArea.offset.x = 0;
-		renderPassBeginInfo.renderArea.offset.y = 0;
 		renderPassBeginInfo.renderArea.extent.width = width;
 		renderPassBeginInfo.renderArea.extent.height = height;
 		renderPassBeginInfo.clearValueCount = settings.multiSampling ? 3 : 2;
@@ -231,15 +287,10 @@ public:
 			VK_CHECK_RESULT(vkBeginCommandBuffer(drawCmdBuffers[i], &cmdBufferBeginInfo));
 			vkCmdBeginRenderPass(drawCmdBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
-			VkViewport viewport{};
-			viewport.width = (float)width;
-			viewport.height = (float)height;
-			viewport.minDepth = 0.0f;
-			viewport.maxDepth = 1.0f;
+			VkViewport viewport{ 0.0f, 0.0f, (float)width, (float)height, 0.0f, 1.0f };
 			vkCmdSetViewport(drawCmdBuffers[i], 0, 1, &viewport);
 
-			VkRect2D scissor{};
-			scissor.extent = { width, height };
+			VkRect2D scissor{ { 0, 0}, { width, height } };
 			vkCmdSetScissor(drawCmdBuffers[i], 0, 1, &scissor);
 
 			VkDeviceSize offsets[1] = { 0 };
@@ -267,6 +318,36 @@ public:
 			}
 			for (auto node : models.scene->nodes) {
 				renderNode(node, drawCmdBuffers[i], vkglTF::Material::ALPHAMODE_BLEND);
+			}
+
+			/*
+				User interface
+			*/
+			vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.ui);
+			vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.ui, 0, 1, &descriptorSets.ui, 0, NULL);
+
+			vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &ui.vertexBuffer.buffer, offsets);
+			vkCmdBindIndexBuffer(drawCmdBuffers[i], ui.indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT16);
+
+			vkCmdPushConstants(drawCmdBuffers[i], pipelineLayouts.ui, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(UI::PushConstBlock), &ui.pushConstBlock);
+
+			ImDrawData* imDrawData = ImGui::GetDrawData();
+			int32_t vertexOffset = 0;
+			int32_t indexOffset = 0;
+			for (int32_t j = 0; j < imDrawData->CmdListsCount; j++) {
+				const ImDrawList* cmd_list = imDrawData->CmdLists[j];
+				for (int32_t k = 0; k < cmd_list->CmdBuffer.Size; k++) {
+					const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[k];
+					VkRect2D scissorRect;
+					scissorRect.offset.x = std::max((int32_t)(pcmd->ClipRect.x), 0);
+					scissorRect.offset.y = std::max((int32_t)(pcmd->ClipRect.y), 0);
+					scissorRect.extent.width = (uint32_t)(pcmd->ClipRect.z - pcmd->ClipRect.x);
+					scissorRect.extent.height = (uint32_t)(pcmd->ClipRect.w - pcmd->ClipRect.y);
+					vkCmdSetScissor(drawCmdBuffers[i], 0, 1, &scissorRect);
+					vkCmdDrawIndexed(drawCmdBuffers[i], pcmd->ElemCount, 1, indexOffset, vertexOffset, 0);
+					indexOffset += pcmd->ElemCount;
+				}
+				vertexOffset += cmd_list->VtxBuffer.Size;
 			}
 
 			vkCmdEndRenderPass(drawCmdBuffers[i]);
@@ -530,7 +611,9 @@ public:
 
 		}
 
-		// Skybox (fixed set)
+		/*
+			Skybox (fixed set)
+		*/
 		{
 			VkDescriptorSetAllocateInfo descriptorSetAllocInfo{};
 			descriptorSetAllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -563,6 +646,35 @@ public:
 			writeDescriptorSets[2].pImageInfo = &textures.prefilteredCube.descriptor;
 
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, NULL);
+		}
+
+		/*
+			User interface
+		*/
+		{
+			// Layout
+			VkDescriptorSetLayoutBinding setLayoutBinding{ 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr };
+			VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCI{};
+			descriptorSetLayoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+			descriptorSetLayoutCI.pBindings = &setLayoutBinding;
+			descriptorSetLayoutCI.bindingCount = 1;
+			VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCI, nullptr, &descriptorSetLayouts.ui));
+
+			// Set
+			VkDescriptorSetAllocateInfo descriptorSetAllocInfo{};
+			descriptorSetAllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+			descriptorSetAllocInfo.descriptorPool = descriptorPool;
+			descriptorSetAllocInfo.pSetLayouts = &descriptorSetLayouts.ui;
+			descriptorSetAllocInfo.descriptorSetCount = 1;
+			VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &descriptorSetAllocInfo, &descriptorSets.ui));
+			VkWriteDescriptorSet writeDescriptorSet{};
+			writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			writeDescriptorSet.descriptorCount = 1;
+			writeDescriptorSet.dstSet = descriptorSets.ui;
+			writeDescriptorSet.dstBinding = 0;
+			writeDescriptorSet.pImageInfo = &textures.font.descriptor;
+			vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
 		}
 	}
 
@@ -698,6 +810,38 @@ public:
 		blendAttachmentState.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
 		blendAttachmentState.alphaBlendOp = VK_BLEND_OP_ADD;
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.pbrAlphaBlend));
+
+		for (auto shaderStage : shaderStages) {
+			vkDestroyShaderModule(device, shaderStage.module, nullptr);
+		}
+
+		/*
+			UI pipeline
+		*/
+		pushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+		pushConstantRange.size = sizeof(UI::PushConstBlock);
+		pipelineLayoutCI.setLayoutCount = 1;
+		pipelineLayoutCI.pSetLayouts = &descriptorSetLayouts.ui;
+		pipelineLayoutCI.pushConstantRangeCount = 1;
+		pipelineLayoutCI.pPushConstantRanges = &pushConstantRange;
+		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCI, nullptr, &pipelineLayouts.ui));
+
+		pipelineCI.layout = pipelineLayouts.ui;
+		vertexInputBinding.stride = 20;
+		vertexInputAttributes = {
+			{ 0, 0, VK_FORMAT_R32G32_SFLOAT, 0 },
+			{ 1, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(float) * 2 },
+			{ 2, 0, VK_FORMAT_R8G8B8A8_UNORM, sizeof(float) * 4 },
+		};
+		vertexInputStateCI.vertexBindingDescriptionCount = 1;
+		vertexInputStateCI.pVertexBindingDescriptions = &vertexInputBinding;
+		vertexInputStateCI.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexInputAttributes.size());
+		vertexInputStateCI.pVertexAttributeDescriptions = vertexInputAttributes.data();
+		shaderStages = {
+			loadShader(device, "uioverlay.vert.spv", VK_SHADER_STAGE_VERTEX_BIT),
+			loadShader(device, "uioverlay.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT)
+		};
+		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.ui));
 
 		for (auto shaderStage : shaderStages) {
 			vkDestroyShaderModule(device, shaderStage.module, nullptr);
@@ -1528,10 +1672,12 @@ public:
 		uniformBuffers.scene.create(vulkanDevice, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, sizeof(uboMatrices));
 		uniformBuffers.skybox.create(vulkanDevice, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, sizeof(uboMatrices));
 		uniformBuffers.params.create(vulkanDevice, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, sizeof(uboParams));
+
+		updateMatrices();
 		updateParams();
 	}
 
-	void updateUniformBuffers()
+	void updateMatrices()
 	{
 		// Scene
 		uboMatrices.projection = camera.matrices.perspective;
@@ -1567,19 +1713,205 @@ public:
 		memcpy(uniformBuffers.params.mapped, &uboParams, sizeof(uboParams));
 	}
 
-	void prepare()
+	/* 
+		UI Overlay
+	*/
+	void setupOverlay()
 	{
-		VulkanExampleBase::prepare();
+		ImGuiIO& io = ImGui::GetIO();
+		unsigned char* fontData;
+		int texWidth, texHeight;
+		io.Fonts->AddFontFromFileTTF("./../data/Roboto-Medium.ttf", 16.0f);
+		io.Fonts->GetTexDataAsRGBA32(&fontData, &texWidth, &texHeight);
+		textures.font.loadFromBuffer(fontData, texWidth * texHeight * 4 * sizeof(char), VK_FORMAT_R8G8B8A8_UNORM, texWidth, texHeight, vulkanDevice, queue);
 
-		loadAssets();
-		generateBRDFLUT();
-		generateCubemaps();
-		prepareUniformBuffers();
-		setupDescriptors();
-		preparePipelines();
-		buildCommandBuffers();
+#if defined(__ANDROID__)		
+		if (vks::android::screenDensity >= ACONFIGURATION_DENSITY_XXHIGH)
+			scale = 3.5f;
+			else if (vks::android::screenDensity >= ACONFIGURATION_DENSITY_XHIGH)
+				scale = 2.5f;
+				else if (vks::android::screenDensity >= ACONFIGURATION_DENSITY_HIGH)
+					scale = 2.0f;
+#endif
 
-		prepared = true;
+		ImGuiStyle& style = ImGui::GetStyle();
+		style.Colors[ImGuiCol_TitleBg] = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+		style.Colors[ImGuiCol_TitleBgActive] = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
+		style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(1.0f, 0.0f, 0.0f, 0.1f);
+		style.Colors[ImGuiCol_MenuBarBg] = ImVec4(1.0f, 0.0f, 0.0f, 0.4f);
+		style.Colors[ImGuiCol_Header] = ImVec4(0.8f, 0.0f, 0.0f, 0.4f);
+		style.Colors[ImGuiCol_HeaderActive] = ImVec4(1.0f, 0.0f, 0.0f, 0.4f);
+		style.Colors[ImGuiCol_HeaderHovered] = ImVec4(1.0f, 0.0f, 0.0f, 0.4f);
+		style.Colors[ImGuiCol_CheckMark] = ImVec4(1.0f, 0.0f, 0.0f, 0.8f);
+	}
+
+	void updateOverlay()
+	{
+		ImGuiIO& io = ImGui::GetIO();
+
+		io.DisplaySize = ImVec2((float)width, (float)height);
+		io.DeltaTime = frameTimer;
+
+		io.MousePos = ImVec2(mousePos.x, mousePos.y);
+		io.MouseDown[0] = mouseButtons.left;
+		io.MouseDown[1] = mouseButtons.right;
+
+		ui.pushConstBlock.scale = glm::vec2(2.0f / io.DisplaySize.x, 2.0f / io.DisplaySize.y);
+		ui.pushConstBlock.translate = glm::vec2(-1.0f);
+
+		const float sideBarWidth = 175.0f;
+		bool updatePrms = false;
+		bool updateCBs = false;
+
+		ImGui::NewFrame();
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
+		ImGui::SetNextWindowPos(ImVec2(width - sideBarWidth, 0));
+		ImGui::SetNextWindowSize(ImVec2(sideBarWidth, height), ImGuiSetCond_Always);
+		ImGui::Begin("Vulkan glTF 2.0 PBR", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+		ImGui::TextUnformatted("Vulkan glTF 2.0 PBR");
+		ImGui::Text("%.1d fps (%.2f ms)", lastFPS, (1000.0f / lastFPS));
+		
+		if (ui.header("Settings")) {
+			if (ui.checkbox("Background", &displayBackground)) {
+				updateCBs = true;
+			}
+			ImGui::Text("Exposure");
+			if (ui.slider("##exposure", &uboParams.exposure, 0.1f, 10.0f)) {
+				updatePrms = true;
+			}
+			ImGui::Text("Gamma");
+			if (ui.slider("##gamma", &uboParams.gamma, 0.1f, 4.0f)) {
+				updatePrms = true;
+			}
+			ImGui::Text("IBL contribution");
+			if (ui.slider("##ibl", &uboParams.scaleIBLAmbient, 0.0f, 1.0f)) {
+				updatePrms = true;
+			}
+		}
+
+		if (ui.header("Components")) {
+			if (ui.checkbox("Base Color", &uboParams.scaleDiffBaseMR[1])) {
+				uboParams.scaleDiffBaseMR = glm::vec4(0.0f, uboParams.scaleDiffBaseMR[1], 0.0f, 0.0f);
+				uboParams.scaleFGDSpec = glm::vec4(0.0f);
+				updatePrms = true;
+			};
+			if (ui.checkbox("Metallic", &uboParams.scaleDiffBaseMR[2])) {
+				uboParams.scaleDiffBaseMR = glm::vec4(0.0f, 0.0f, uboParams.scaleDiffBaseMR[2], 0.0f);
+				uboParams.scaleFGDSpec = glm::vec4(0.0f);
+				updatePrms = true;
+			};
+			if (ui.checkbox("Roughness", &uboParams.scaleDiffBaseMR[3])) {
+				uboParams.scaleDiffBaseMR = glm::vec4(0.0f, 0.0f, 0.0f, uboParams.scaleDiffBaseMR[3]);
+				uboParams.scaleFGDSpec = glm::vec4(0.0f);
+				updatePrms = true;
+			};
+		}
+		
+		if (ui.header("PBR equation")) {
+			if (ui.checkbox("Diff(l,n)", &uboParams.scaleDiffBaseMR[0])) {
+				uboParams.scaleDiffBaseMR = glm::vec4(uboParams.scaleDiffBaseMR[0], 0.0f, 0.0f, 0.0f);
+				uboParams.scaleFGDSpec = glm::vec4(0.0f);
+				updatePrms = true;
+			};
+			if (ui.checkbox("F(l,h)", &uboParams.scaleFGDSpec[0])) {
+				uboParams.scaleDiffBaseMR = glm::vec4(0.0f);
+				uboParams.scaleFGDSpec = glm::vec4(uboParams.scaleFGDSpec[0], 0.0f, 0.0f, 0.0f);
+				updatePrms = true;
+			};
+			if (ui.checkbox("G(l,v,h)", &uboParams.scaleFGDSpec[1])) {
+				uboParams.scaleDiffBaseMR = glm::vec4(0.0f);
+				uboParams.scaleFGDSpec = glm::vec4(0.0f, uboParams.scaleFGDSpec[1], 0.0f, 0.0f);
+				updatePrms = true;
+			};
+			if (ui.checkbox("D(h)", &uboParams.scaleFGDSpec[2])) {
+				uboParams.scaleDiffBaseMR = glm::vec4(0.0f);
+				uboParams.scaleFGDSpec = glm::vec4(0.0f, 0.0f, uboParams.scaleFGDSpec[2], 0.0f);
+				updatePrms = true;
+			};
+			if (ui.checkbox("Specular", &uboParams.scaleFGDSpec[3])) {
+				uboParams.scaleDiffBaseMR = glm::vec4(0.0f);
+				uboParams.scaleFGDSpec = glm::vec4(0.0f, 0.0f, 0.0f, uboParams.scaleFGDSpec[3]);
+				updatePrms = true;
+			};
+		}
+
+		if (models.scene->animations.size() > 0) {
+			if (ui.header("Animations")) {
+				std::vector<std::string> animationNames;
+				for (auto animation : models.scene->animations) {
+					animationNames.push_back(animation.name);
+				}
+				ui.combo("Animation", &animationIndex, animationNames);
+				ui.checkbox("Animate", &animate);
+			}
+		}
+	
+		ImGui::End();
+		ImGui::PopStyleVar();
+		ImGui::Render();
+
+		ImDrawData* imDrawData = ImGui::GetDrawData();
+
+		// Check if ui buffers need to be recreated
+		if (imDrawData) {
+			VkDeviceSize vertexBufferSize = imDrawData->TotalVtxCount * sizeof(ImDrawVert);
+			VkDeviceSize indexBufferSize = imDrawData->TotalIdxCount * sizeof(ImDrawIdx);
+
+			bool updateVertices = ((ui.vertexBuffer.buffer == VK_NULL_HANDLE) || (ui.vertexBuffer.count != imDrawData->TotalVtxCount));
+			bool updateIndices = ((ui.indexBuffer.buffer == VK_NULL_HANDLE) || (ui.indexBuffer.count < imDrawData->TotalIdxCount));
+
+			if (updateVertices || updateIndices) {
+				vkDeviceWaitIdle(device);
+			}
+
+			if (updateVertices) {
+				if (ui.vertexBuffer.buffer) {
+					ui.vertexBuffer.destroy();
+				}
+				ui.vertexBuffer.create(vulkanDevice, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, vertexBufferSize);
+				ui.vertexBuffer.count = imDrawData->TotalVtxCount;
+			}
+			if (updateIndices) {
+				if (ui.indexBuffer.buffer) {
+					ui.indexBuffer.destroy();
+				}
+				ui.indexBuffer.create(vulkanDevice, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, vertexBufferSize);
+				ui.indexBuffer.count = imDrawData->TotalIdxCount;
+			}
+
+			// Upload data
+			ImDrawVert* vtxDst = (ImDrawVert*)ui.vertexBuffer.mapped;
+			ImDrawIdx* idxDst = (ImDrawIdx*)ui.indexBuffer.mapped;
+			for (int n = 0; n < imDrawData->CmdListsCount; n++) {
+				const ImDrawList* cmd_list = imDrawData->CmdLists[n];
+				memcpy((ImDrawVert*)ui.vertexBuffer.mapped, cmd_list->VtxBuffer.Data, cmd_list->VtxBuffer.Size * sizeof(ImDrawVert));
+				memcpy((ImDrawIdx*)ui.indexBuffer.mapped, cmd_list->IdxBuffer.Data, cmd_list->IdxBuffer.Size * sizeof(ImDrawIdx));
+				vtxDst += cmd_list->VtxBuffer.Size;
+				idxDst += cmd_list->IdxBuffer.Size;
+			}
+
+			ui.vertexBuffer.flush();
+			ui.indexBuffer.flush();
+
+			updateCBs = updateVertices || updateIndices;
+		}
+
+		if (updateCBs) {
+			vkDeviceWaitIdle(device);
+			buildCommandBuffers();
+			vkDeviceWaitIdle(device);
+		}
+
+		if (updatePrms) {
+			updateParams();
+			updateMatrices();
+		}
+
+#if defined(VK_USE_PLATFORM_ANDROID_KHR)
+		if (mouseButtons.left) {
+			mouseButtons.left = false;
+		}
+#endif
 	}
 
 	virtual void render()
@@ -1587,6 +1919,7 @@ public:
 		if (!prepared) {
 			return;
 		}
+		updateOverlay();
 		VulkanExampleBase::prepareFrame();
 		VK_CHECK_RESULT(vkWaitForFences(device, 1, &waitFences[currentBuffer], VK_TRUE, UINT64_MAX));
 		VK_CHECK_RESULT(vkResetFences(device, 1, &waitFences[currentBuffer]));
@@ -1609,58 +1942,39 @@ public:
 					modelrot.y -= 360.0f;
 				}
 			}
-			if (models.scene.animations.size() > 0) {
-				animationTimer += frameTimer * 0.75f;
-				if (animationTimer > models.scene.animations[animationIndex].end) {
-					animationTimer -= models.scene.animations[animationIndex].end;
-				}
-				models.scene.updateAnimation(animationIndex, animationTimer);
-			}
 			updateParams();
 			if (rotateModel) {
-				updateUniformBuffers();
+				updateMatrices();
 			}
 		}
+		if ((animate) && (models.scene->animations.size() > 0)) {
+			animationTimer += frameTimer * 0.75f;
+			if (animationTimer > models.scene->animations[animationIndex].end) {
+				animationTimer -= models.scene->animations[animationIndex].end;
+			}
+			models.scene->updateAnimation(animationIndex, animationTimer);
+		}
 		if (camera.updated) {
-			updateUniformBuffers();
+			updateMatrices();
 		}
 	}
 
-#if !defined(VK_USE_PLATFORM_ANDROID_KHR)
-	virtual void keyPressed(uint32_t key)
+	void prepare()
 	{
-		switch (key) {
-			case KEY_F1:
-				if (uboParams.exposure > 0.1f) {
-					uboParams.exposure -= 0.1f;
-					updateParams();
-					std::cout << "Exposure: " << uboParams.exposure << std::endl;
-				}
-				break;
-			case KEY_F2:
-				if (uboParams.exposure < 10.0f) {
-					uboParams.exposure += 0.1f;
-					updateParams();
-					std::cout << "Exposure: " << uboParams.exposure << std::endl;
-				}
-				break;
-			case KEY_F3:
-				if (uboParams.gamma > 0.1f) {
-					uboParams.gamma -= 0.1f;
-					updateParams();
-					std::cout << "Gamma: " << uboParams.gamma << std::endl;
-				}
-				break;
-			case KEY_F4:
-				if (uboParams.gamma < 10.0f) {
-					uboParams.gamma += 0.1f;
-					updateParams();
-					std::cout << "Gamma: " << uboParams.gamma << std::endl;
-				}
-				break;
-		}
+		VulkanExampleBase::prepare();
+
+		loadAssets();
+		generateBRDFLUT();
+		generateCubemaps();
+		prepareUniformBuffers();
+		setupOverlay();
+		setupDescriptors();
+		preparePipelines();
+		updateOverlay();
+		buildCommandBuffers();
+
+		prepared = true;
 	}
-#endif
 };
 
 VulkanExample *vulkanExample;

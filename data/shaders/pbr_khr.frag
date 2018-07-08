@@ -21,6 +21,9 @@ layout (set = 0, binding = 1) uniform UBOParams {
 	float exposure;
 	float gamma;
 	float prefilteredCubeMipLevels;
+	float scaleIBLAmbient;
+	vec4 scaleFGDSpec;
+	vec4 scaleDiffBaseMR;
 } uboParams;
 
 layout (set = 0, binding = 2) uniform samplerCube samplerIrradiance;
@@ -143,11 +146,9 @@ vec3 getIBLContribution(PBRInfo pbrInputs, vec3 n, vec3 reflection)
 	vec3 diffuse = diffuseLight * pbrInputs.diffuseColor;
 	vec3 specular = specularLight * (pbrInputs.specularColor * brdf.x + brdf.y);
 
-	const vec2 u_ScaleIBLAmbient = vec2(1.0f);
-
 	// For presentation, this allows us to disable IBL terms
-	diffuse *= u_ScaleIBLAmbient.x;
-	specular *= u_ScaleIBLAmbient.y;
+	diffuse *= uboParams.scaleIBLAmbient;
+	specular *= uboParams.scaleIBLAmbient;
 
 	return diffuse + specular;
 }
@@ -294,20 +295,17 @@ void main()
 		color += emissive;
 	}
 
-	const vec4 u_ScaleFGDSpec = vec4(0.0f);
-	const vec4 u_ScaleDiffBaseMR = vec4(0.0f);
-
 	// This section uses mix to override final color for reference app visualization
 	// of various parameters in the lighting equation.
-	color = mix(color, F, u_ScaleFGDSpec.x);
-	color = mix(color, vec3(G), u_ScaleFGDSpec.y);
-	color = mix(color, vec3(D), u_ScaleFGDSpec.z);
-	color = mix(color, specContrib, u_ScaleFGDSpec.w);
+	color = mix(color, F, uboParams.scaleFGDSpec.x);
+	color = mix(color, vec3(G), uboParams.scaleFGDSpec.y);
+	color = mix(color, vec3(D), uboParams.scaleFGDSpec.z);
+	color = mix(color, specContrib, uboParams.scaleFGDSpec.w);
 
-	color = mix(color, diffuseContrib, u_ScaleDiffBaseMR.x);
-	color = mix(color, baseColor.rgb, u_ScaleDiffBaseMR.y);
-	color = mix(color, vec3(metallic), u_ScaleDiffBaseMR.z);
-	color = mix(color, vec3(perceptualRoughness), u_ScaleDiffBaseMR.w);
+	color = mix(color, diffuseContrib, uboParams.scaleDiffBaseMR.x);
+	color = mix(color, baseColor.rgb, uboParams.scaleDiffBaseMR.y);
+	color = mix(color, vec3(metallic), uboParams.scaleDiffBaseMR.z);
+	color = mix(color, vec3(perceptualRoughness), uboParams.scaleDiffBaseMR.w);
 
 	outColor = vec4(color, baseColor.a);
 }
