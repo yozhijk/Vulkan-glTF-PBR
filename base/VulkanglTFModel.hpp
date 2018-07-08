@@ -537,19 +537,21 @@ namespace vkglTF
 			float radius;
 		} dimensions;
 
-		void destroy(VkDevice device)
+		Model(vks::VulkanDevice *device) : device(device) {};
+
+		~Model() 
 		{
-			vkDestroyBuffer(device, vertices.buffer, nullptr);
-			vkFreeMemory(device, vertices.memory, nullptr);
-			vkDestroyBuffer(device, indices.buffer, nullptr);
-			vkFreeMemory(device, indices.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, vertices.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, vertices.memory, nullptr);
+			vkDestroyBuffer(device->logicalDevice, indices.buffer, nullptr);
+			vkFreeMemory(device->logicalDevice, indices.memory, nullptr);
 			for (auto texture : textures) {
 				texture.destroy();
 			}
 			for (auto node : nodes) {
 				delete node;
 			}
-		};
+		}
 
 		void loadNode(vkglTF::Node *parent, const tinygltf::Node &node, uint32_t nodeIndex, const tinygltf::Model &model, std::vector<uint32_t>& indexBuffer, std::vector<Vertex>& vertexBuffer, float globalscale)
 		{

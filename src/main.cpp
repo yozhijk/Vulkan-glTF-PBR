@@ -101,8 +101,8 @@ public:
 	} textures;
 
 	struct Models {
-		vkglTF::Model scene;
-		vkglTF::Model skybox;
+		vkglTF::Model *scene = nullptr;
+		vkglTF::Model *skybox = nullptr;
 	} models;
 
 	struct Buffer {
@@ -166,6 +166,8 @@ public:
 	glm::vec3 modelrot = glm::vec3(0.0f);
 	glm::vec3 modelPos = glm::vec3(0.0f);
 
+	bool displayBackground = true;
+
 	struct PushConstBlockMaterial {
 		glm::vec4 baseColorFactor;
 		float hasBaseColorTexture;
@@ -205,8 +207,8 @@ public:
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayouts.material, nullptr);
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayouts.node, nullptr);
 
-		models.scene.destroy(device);
-		models.skybox.destroy(device);
+		delete models.scene;
+		delete models.skybox;
 
 		vkDestroyBuffer(device, uniformBuffers.scene.buffer, nullptr);
 		vkFreeMemory(device, uniformBuffers.scene.memory, nullptr);
@@ -305,34 +307,50 @@ public:
 
 			VkDeviceSize offsets[1] = { 0 };
 
-			vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets.skybox, 0, NULL);
-			vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.skybox);
-			models.skybox.draw(drawCmdBuffers[i]);
+			if (displayBackground) {
+				vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets.skybox, 0, NULL);
+				vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.skybox);
+				models.skybox->draw(drawCmdBuffers[i]);
+			}
 
 			vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.pbr);
 
-			vkglTF::Model &model = models.scene;
-
-			vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &model.vertices.buffer, offsets);
-			vkCmdBindIndexBuffer(drawCmdBuffers[i], model.indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+			vkCmdBindVertexBuffers(drawCmdBuffers[i], 0, 1, &models.scene->vertices.buffer, offsets);
+			vkCmdBindIndexBuffer(drawCmdBuffers[i], models.scene->indices.buffer, 0, VK_INDEX_TYPE_UINT32);
 
 			// Opaque primitives first
-			for (auto node : model.nodes) {
+			for (auto node : models.scene->nodes) {
 				renderNode(node, drawCmdBuffers[i], vkglTF::Material::ALPHAMODE_OPAQUE);
 			}
 			// Transparent last
 			// TODO: Correct depth sorting
 			vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.pbrAlphaBlend);
-			for (auto node : model.nodes) {
+			for (auto node : models.scene->nodes) {
 				renderNode(node, drawCmdBuffers[i], vkglTF::Material::ALPHAMODE_MASK);
 			}
-			for (auto node : model.nodes) {
+			for (auto node : models.scene->nodes) {
 				renderNode(node, drawCmdBuffers[i], vkglTF::Material::ALPHAMODE_BLEND);
 			}
 
 			vkCmdEndRenderPass(drawCmdBuffers[i]);
 			VK_CHECK_RESULT(vkEndCommandBuffer(drawCmdBuffers[i]));
 		}
+	}
+
+	void loadScene(const char* filename)
+	{
+		std::cout << "Loading scene from " << filename << std::endl;
+		if (models.scene) {
+			delete models.scene;
+		}
+		animationIndex = 0;
+		animationTimer = 0.0f;
+		models.scene = new vkglTF::Model(vulkanDevice);
+		models.scene->loadFromFile(filename, vulkanDevice, queue);
+		// Scale and center model to fit into viewport
+
+		scale = 1.0f / models.scene->dimensions.radius;
+		camera.setPosition(glm::vec3(-models.scene->dimensions.center.x * scale, -models.scene->dimensions.center.y * scale, camera.position.z));
 	}
 
 	void loadAssets()
@@ -378,13 +396,11 @@ public:
 		}
 
 		textures.environmentCube.loadFromFile(envMapFile, VK_FORMAT_R16G16B16A16_SFLOAT, vulkanDevice, queue);
-		models.scene.loadFromFile(sceneFile, vulkanDevice, queue);
 
-		models.skybox.loadFromFile(assetpath + "models/Box/glTF-Embedded/Box.gltf", vulkanDevice, queue);
+		loadScene(sceneFile.c_str());
 
-		// Scale and center model to fit into viewport
-		scale = 1.0f / models.scene.dimensions.radius;
-		camera.setPosition(glm::vec3(-models.scene.dimensions.center.x * scale, -models.scene.dimensions.center.y * scale, camera.position.z));
+		models.skybox = new vkglTF::Model(vulkanDevice);
+		models.skybox->loadFromFile(assetpath + "models/Box/glTF-Embedded/Box.gltf", vulkanDevice, queue);
 	}
 
 	void setupNodeDescriptorSet(vkglTF::Node *node) {
@@ -423,7 +439,7 @@ public:
 		// Environment samplers (radiance, irradiance, brdf lut)
 		imageSamplerCount += 3;
 
-		std::vector<vkglTF::Model*> modellist = { &models.skybox, &models.scene };
+		std::vector<vkglTF::Model*> modellist = { models.skybox, models.scene };
 		for (auto &model : modellist) {
 			for (auto &material : model->materials) {
 				imageSamplerCount += 5;
@@ -529,7 +545,7 @@ public:
 			VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCI, nullptr, &descriptorSetLayouts.material));
 
 			// Per-Material descriptor sets
-			for (auto &material : models.scene.materials) {
+			for (auto &material : models.scene->materials) {
 				VkDescriptorSetAllocateInfo descriptorSetAllocInfo{};
 				descriptorSetAllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
 				descriptorSetAllocInfo.descriptorPool = descriptorPool;
@@ -570,7 +586,7 @@ public:
 				VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCI, nullptr, &descriptorSetLayouts.node));
 
 				// Per-Node descriptor set
-				for (auto &node : models.scene.nodes) {
+				for (auto &node : models.scene->nodes) {
 					setupNodeDescriptorSet(node);
 				}
 			}
@@ -679,7 +695,7 @@ public:
 		pipelineLayoutCI.pPushConstantRanges = &pushConstantRange;
 		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCI, nullptr, &pipelineLayout));
 
-		// Vertex bindings an attributes
+		// Vertex bindings and attributes
 		VkVertexInputBindingDescription vertexInputBinding = { 0, sizeof(vkglTF::Model::Vertex), VK_VERTEX_INPUT_RATE_VERTEX };
 		std::vector<VkVertexInputAttributeDescription> vertexInputAttributes = {
 			{ 0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0 },
@@ -695,7 +711,6 @@ public:
 		vertexInputStateCI.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexInputAttributes.size());
 		vertexInputStateCI.pVertexAttributeDescriptions = vertexInputAttributes.data();
 
-		// Pipelines
 		std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages;
 
 		VkGraphicsPipelineCreateInfo pipelineCI{};
@@ -713,11 +728,9 @@ public:
 		pipelineCI.stageCount = static_cast<uint32_t>(shaderStages.size());
 		pipelineCI.pStages = shaderStages.data();
 
-		if (settings.multiSampling) {
-			multisampleStateCI.rasterizationSamples = settings.sampleCount;
-		}
-
-		// Skybox pipeline (background cube)
+		/*
+			Background pipeline
+		*/
 		shaderStages = {
 			loadShader(device, "skybox.vert.spv", VK_SHADER_STAGE_VERTEX_BIT),
 			loadShader(device, "skybox.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT)
@@ -727,7 +740,9 @@ public:
 			vkDestroyShaderModule(device, shaderStage.module, nullptr);
 		}
 
-		// PBR pipeline
+		/*
+			PBR pipeline
+		*/
 		shaderStages = {
 			loadShader(device, "pbr.vert.spv", VK_SHADER_STAGE_VERTEX_BIT),
 			loadShader(device, "pbr_khr.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT)
@@ -1458,7 +1473,7 @@ public:
 
 					VkDeviceSize offsets[1] = { 0 };
 
-					models.skybox.draw(cmdBuf);
+					models.skybox->draw(cmdBuf);
 
 					vkCmdEndRenderPass(cmdBuf);
 
