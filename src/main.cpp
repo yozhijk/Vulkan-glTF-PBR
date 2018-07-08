@@ -20,6 +20,7 @@
 
 #include <vulkan/vulkan.h>
 #include "VulkanExampleBase.h"
+#include "VulkanUtils.hpp"
 #include "VulkanTexture.hpp"
 #include "VulkanglTFModel.hpp"
 
@@ -31,60 +32,6 @@
 #define TINYGLTF_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
 #include "tiny_gltf.h"
-
-/*
-	Utility functions
-*/
-VkPipelineShaderStageCreateInfo loadShader(VkDevice device, std::string filename, VkShaderStageFlagBits stage)
-{
-	VkPipelineShaderStageCreateInfo shaderStage{};
-	shaderStage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-	shaderStage.stage = stage;
-	shaderStage.pName = "main";
-#if defined(VK_USE_PLATFORM_ANDROID_KHR)
-	std::string assetpath = "shaders/" + filename;
-	AAsset* asset = AAssetManager_open(androidApp->activity->assetManager, assetpath.c_str(), AASSET_MODE_STREAMING);
-	assert(asset);
-	size_t size = AAsset_getLength(asset);
-	assert(size > 0);
-	char *shaderCode = new char[size];
-	AAsset_read(asset, shaderCode, size);
-	AAsset_close(asset);
-	VkShaderModule shaderModule;
-	VkShaderModuleCreateInfo moduleCreateInfo;
-	moduleCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-	moduleCreateInfo.pNext = NULL;
-	moduleCreateInfo.codeSize = size;
-	moduleCreateInfo.pCode = (uint32_t*)shaderCode;
-	moduleCreateInfo.flags = 0;
-	VK_CHECK_RESULT(vkCreateShaderModule(device, &moduleCreateInfo, NULL, &shaderStage.module));
-	delete[] shaderCode;
-#else
-	std::ifstream is("./../data/shaders/" + filename, std::ios::binary | std::ios::in | std::ios::ate);
-
-	if (is.is_open()) {
-		size_t size = is.tellg();
-		is.seekg(0, std::ios::beg);
-		char* shaderCode = new char[size];
-		is.read(shaderCode, size);
-		is.close();
-		assert(size > 0);
-		VkShaderModuleCreateInfo moduleCreateInfo{};
-		moduleCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-		moduleCreateInfo.codeSize = size;
-		moduleCreateInfo.pCode = (uint32_t*)shaderCode;
-		vkCreateShaderModule(device, &moduleCreateInfo, NULL, &shaderStage.module);
-		delete[] shaderCode;
-	}
-	else {
-		std::cerr << "Error: Could not open shader file \"" << filename << "\"" << std::endl;
-		shaderStage.module = VK_NULL_HANDLE;
-	}
-
-#endif
-	assert(shaderStage.module != VK_NULL_HANDLE);
-	return shaderStage;
-}
 
 /*
 	PBR example main class
@@ -104,13 +51,6 @@ public:
 		vkglTF::Model *scene = nullptr;
 		vkglTF::Model *skybox = nullptr;
 	} models;
-
-	struct Buffer {
-		VkBuffer buffer;
-		VkDeviceMemory memory;
-		VkDescriptorBufferInfo descriptor;
-		void *mapped;
-	};
 
 	struct UniformBuffers {
 		Buffer scene;
@@ -210,12 +150,9 @@ public:
 		delete models.scene;
 		delete models.skybox;
 
-		vkDestroyBuffer(device, uniformBuffers.scene.buffer, nullptr);
-		vkFreeMemory(device, uniformBuffers.scene.memory, nullptr);
-		vkDestroyBuffer(device, uniformBuffers.skybox.buffer, nullptr);
-		vkFreeMemory(device, uniformBuffers.skybox.memory, nullptr);
-		vkDestroyBuffer(device, uniformBuffers.params.buffer, nullptr);
-		vkFreeMemory(device, uniformBuffers.params.memory, nullptr);
+		uniformBuffers.scene.destroy();
+		uniformBuffers.skybox.destroy();
+		uniformBuffers.params.destroy();
 
 		textures.environmentCube.destroy();
 		textures.irradianceCube.destroy();
@@ -1588,41 +1525,9 @@ public:
 	*/
 	void prepareUniformBuffers()
 	{
-		// Objact vertex shader uniform buffer
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-			sizeof(uboMatrices),
-			&uniformBuffers.scene.buffer,
-			&uniformBuffers.scene.memory));
-
-		// Skybox vertex shader uniform buffer
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-			sizeof(uboMatrices),
-			&uniformBuffers.skybox.buffer,
-			&uniformBuffers.skybox.memory));
-
-		// Shared parameter uniform buffer
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-			sizeof(uboParams),
-			&uniformBuffers.params.buffer,
-			&uniformBuffers.params.memory));
-
-		// Descriptors
-		uniformBuffers.scene.descriptor = { uniformBuffers.scene.buffer, 0, sizeof(uboMatrices) };
-		uniformBuffers.skybox.descriptor = { uniformBuffers.skybox.buffer, 0, sizeof(uboMatrices) };
-		uniformBuffers.params.descriptor = { uniformBuffers.params.buffer, 0, sizeof(uboParams) };
-
-		// Map persistent
-		VK_CHECK_RESULT(vkMapMemory(device, uniformBuffers.scene.memory, 0, sizeof(uboMatrices), 0, &uniformBuffers.scene.mapped));
-		VK_CHECK_RESULT(vkMapMemory(device, uniformBuffers.skybox.memory, 0, sizeof(uboMatrices), 0, &uniformBuffers.skybox.mapped));
-		VK_CHECK_RESULT(vkMapMemory(device, uniformBuffers.params.memory, 0, sizeof(uboParams), 0, &uniformBuffers.params.mapped));
-
-		updateUniformBuffers();
+		uniformBuffers.scene.create(vulkanDevice, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, sizeof(uboMatrices));
+		uniformBuffers.skybox.create(vulkanDevice, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, sizeof(uboMatrices));
+		uniformBuffers.params.create(vulkanDevice, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, sizeof(uboParams));
 		updateParams();
 	}
 
