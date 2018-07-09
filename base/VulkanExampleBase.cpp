@@ -1901,6 +1901,7 @@ void VulkanExampleBase::windowResize()
 	camera.updateAspectRatio((float)width / (float)height);
 	viewChanged();
 
+	resized = true;
 	prepared = true;
 }
 

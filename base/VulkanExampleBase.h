@@ -104,6 +104,7 @@ protected:
 public: 
 	static std::vector<const char*> args;
 	bool prepared = false;
+	bool resized = false;
 	uint32_t width = 1280;
 	uint32_t height = 720;
 	float frameTimer = 1.0f;

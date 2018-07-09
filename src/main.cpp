@@ -1893,7 +1893,7 @@ public:
 			ui.vertexBuffer.flush();
 			ui.indexBuffer.flush();
 
-			updateCBs = updateVertices || updateIndices;
+			updateCBs = resized || updateCBs || (updateVertices || updateIndices);
 		}
 
 		if (updateCBs) {
@@ -1912,6 +1912,7 @@ public:
 			mouseButtons.left = false;
 		}
 #endif
+		resized = false;
 	}
 
 	virtual void render()
