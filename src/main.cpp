@@ -354,7 +354,7 @@ public:
 		}
 	}
 
-	void loadScene(const char* filename)
+	void loadScene(std::string filename)
 	{
 		std::cout << "Loading scene from " << filename << std::endl;
 		if (models.scene) {
@@ -368,6 +368,19 @@ public:
 
 		scale = 1.0f / models.scene->dimensions.radius;
 		camera.setPosition(glm::vec3(-models.scene->dimensions.center.x * scale, -models.scene->dimensions.center.y * scale, camera.position.z));
+	}
+
+	void loadEnvironment(std::string filename)
+	{
+		std::cout << "Loading environment from " << filename << std::endl;
+		if (textures.environmentCube.image) {
+			textures.environmentCube.destroy();
+			textures.irradianceCube.destroy();
+			textures.prefilteredCube.destroy();
+		}
+
+		textures.environmentCube.loadFromFile(filename, VK_FORMAT_R16G16B16A16_SFLOAT, vulkanDevice, queue);
+		generateCubemaps();
 	}
 
 	void loadAssets()
@@ -412,13 +425,12 @@ public:
 			}
 		}
 
-		textures.environmentCube.loadFromFile(envMapFile, VK_FORMAT_R16G16B16A16_SFLOAT, vulkanDevice, queue);
-
 		loadScene(sceneFile.c_str());
 
 		models.skybox = new vkglTF::Model(vulkanDevice);
 		models.skybox->loadFromFile(assetpath + "models/Box/glTF-Embedded/Box.gltf", vulkanDevice, queue);
 
+		loadEnvironment(envMapFile.c_str());
 	}
 
 	void setupDescriptors()
@@ -1728,14 +1740,39 @@ public:
 #endif
 
 		ImGuiStyle& style = ImGui::GetStyle();
-		style.Colors[ImGuiCol_TitleBg] = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
-		style.Colors[ImGuiCol_TitleBgActive] = ImVec4(1.0f, 0.0f, 0.0f, 1.0f);
-		style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(1.0f, 0.0f, 0.0f, 0.1f);
-		style.Colors[ImGuiCol_MenuBarBg] = ImVec4(1.0f, 0.0f, 0.0f, 0.4f);
-		style.Colors[ImGuiCol_Header] = ImVec4(0.8f, 0.0f, 0.0f, 0.4f);
-		style.Colors[ImGuiCol_HeaderActive] = ImVec4(1.0f, 0.0f, 0.0f, 0.4f);
-		style.Colors[ImGuiCol_HeaderHovered] = ImVec4(1.0f, 0.0f, 0.0f, 0.4f);
-		style.Colors[ImGuiCol_CheckMark] = ImVec4(1.0f, 0.0f, 0.0f, 0.8f);
+		style.Colors[ImGuiCol_TitleBg] = ImVec4(0.6f, 0.0f, 0.0f, 1.0f);
+		style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.6f, 0.0f, 0.0f, 1.0f);
+		style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.6f, 0.0f, 0.0f, 0.1f);
+		style.Colors[ImGuiCol_MenuBarBg] = ImVec4(0.6f, 0.0f, 0.0f, 0.4f);
+		style.Colors[ImGuiCol_Header] = ImVec4(0.6f, 0.0f, 0.0f, 0.4f);
+		style.Colors[ImGuiCol_HeaderActive] = ImVec4(0.6f, 0.0f, 0.0f, 0.4f);
+		style.Colors[ImGuiCol_HeaderHovered] = ImVec4(0.6f, 0.0f, 0.0f, 0.4f);
+		style.Colors[ImGuiCol_CheckMark] = ImVec4(0.6f, 0.0f, 0.0f, 0.8f);
+		style.Colors[ImGuiCol_Button] = ImVec4(0.2f, 0.0f, 0.0f, 0.4f);
+		style.Colors[ImGuiCol_ButtonActive] = ImVec4(0.4f, 0.0f, 0.0f, 0.6f);
+		style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.4f, 0.0f, 0.0f, 0.6f);
+	}
+
+	bool openFile(const char *filter, std::string &filename)
+	{
+#if defined(VK_USE_PLATFORM_WIN32_KHR) 
+		OPENFILENAME ofn;
+		TCHAR szFile[MAX_PATH] = { 0 };
+
+		ZeroMemory(&ofn, sizeof(ofn));
+		ofn.lStructSize = sizeof(ofn);
+		ofn.hwndOwner = window;
+		ofn.lpstrFile = szFile;
+		ofn.nMaxFile = sizeof(szFile);
+		ofn.lpstrFilter = filter;
+		ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST | OFN_NOCHANGEDIR;
+
+		if (GetOpenFileName(&ofn) == TRUE) {
+			filename = ofn.lpstrFile;
+			return true;
+		}
+#endif
+		return false;
 	}
 
 	void updateOverlay()
@@ -1768,15 +1805,15 @@ public:
 			if (ui.checkbox("Background", &displayBackground)) {
 				updateCBs = true;
 			}
-			ImGui::Text("Exposure");
+			ui.text("Exposure");
 			if (ui.slider("##exposure", &uboParams.exposure, 0.1f, 10.0f)) {
 				updatePrms = true;
 			}
-			ImGui::Text("Gamma");
+			ui.text("Gamma");
 			if (ui.slider("##gamma", &uboParams.gamma, 0.1f, 4.0f)) {
 				updatePrms = true;
 			}
-			ImGui::Text("IBL contribution");
+			ui.text("IBL contribution");
 			if (ui.slider("##ibl", &uboParams.scaleIBLAmbient, 0.0f, 1.0f)) {
 				updatePrms = true;
 			}
@@ -1830,13 +1867,39 @@ public:
 
 		if (models.scene->animations.size() > 0) {
 			if (ui.header("Animations")) {
+				ui.checkbox("Animate", &animate);
 				std::vector<std::string> animationNames;
 				for (auto animation : models.scene->animations) {
 					animationNames.push_back(animation.name);
 				}
-				ui.combo("Animation", &animationIndex, animationNames);
-				ui.checkbox("Animate", &animate);
+				ui.text("Animation");
+				ui.combo("##animation", &animationIndex, animationNames);
 			}
+		}
+
+		if (ui.header("Scene")) {
+			if (ImGui::Button("Load gltf scene", ImVec2(ImGui::GetWindowWidth()-15, 25))) {
+				std::string filename;
+				if (openFile("glTF files\0*.gltf\0", filename)) {
+					vkDeviceWaitIdle(device);
+					loadScene(filename);
+					setupDescriptors();
+					updateCBs = true;
+				}
+			}
+			if (ImGui::Button("Load env map", ImVec2(ImGui::GetWindowWidth()-15, 25))) {
+				std::string filename;
+				if (openFile("ktx textures\0*.ktx\0", filename)) {
+					vkDeviceWaitIdle(device);
+					loadEnvironment(filename);
+					setupDescriptors();
+					updateCBs = true;
+				}
+			}
+
+			if (ui.checkbox("Flip UV", &uboMatrices.flipUV)) {
+				updatePrms = true;
+			};
 		}
 	
 		ImGui::End();
@@ -1947,7 +2010,6 @@ public:
 
 		loadAssets();
 		generateBRDFLUT();
-		generateCubemaps();
 		prepareUniformBuffers();
 		setupOverlay();
 		setupDescriptors();
