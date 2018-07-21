@@ -113,7 +113,6 @@ public:
 		glm::vec3 rotation = glm::vec3(75.0f, 40.0f, 0.0f);
 	} lightSource;
 
-	bool rotateModel = false;
 	glm::vec3 modelrot = glm::vec3(0.0f);
 	glm::vec3 modelPos = glm::vec3(0.0f);
 
@@ -1930,18 +1929,6 @@ public:
 		submitInfo.pCommandBuffers = &drawCmdBuffers[currentBuffer];
 		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, waitFences[currentBuffer]));
 		VulkanExampleBase::submitFrame();
-		if (!paused) {
-			if (rotateModel) {
-				modelrot.y += frameTimer * 35.0f;
-				if (modelrot.y > 360.0f) {
-					modelrot.y -= 360.0f;
-				}
-			}
-			updateParams();
-			if (rotateModel) {
-				updateMatrices();
-			}
-		}
 		if ((animate) && (models.scene->animations.size() > 0)) {
 			animationTimer += frameTimer * 0.75f;
 			if (animationTimer > models.scene->animations[animationIndex].end) {
