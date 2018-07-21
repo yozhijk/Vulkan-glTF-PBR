@@ -419,30 +419,7 @@ public:
 
 		models.skybox = new vkglTF::Model(vulkanDevice);
 		models.skybox->loadFromFile(assetpath + "models/Box/glTF-Embedded/Box.gltf", vulkanDevice, queue);
-	}
 
-	void setupNodeDescriptorSet(vkglTF::Node *node) {
-		if (node->mesh) {
-			VkDescriptorSetAllocateInfo descriptorSetAllocInfo{};
-			descriptorSetAllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-			descriptorSetAllocInfo.descriptorPool = descriptorPool;
-			descriptorSetAllocInfo.pSetLayouts = &descriptorSetLayouts.node;
-			descriptorSetAllocInfo.descriptorSetCount = 1;
-			VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &descriptorSetAllocInfo, &node->mesh->uniformBuffer.descriptorSet));
-
-			VkWriteDescriptorSet writeDescriptorSet{};
-			writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-			writeDescriptorSet.descriptorCount = 1;
-			writeDescriptorSet.dstSet = node->mesh->uniformBuffer.descriptorSet;
-			writeDescriptorSet.dstBinding = 0;
-			writeDescriptorSet.pBufferInfo = &node->mesh->uniformBuffer.descriptor;
-
-			vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
-		}
-		for (auto& child : node->children) {
-			setupNodeDescriptorSet(child);
-		}
 	}
 
 	void setupDescriptors()
@@ -604,8 +581,25 @@ public:
 				VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCI, nullptr, &descriptorSetLayouts.node));
 
 				// Per-Node descriptor set
-				for (auto &node : models.scene->nodes) {
-					setupNodeDescriptorSet(node);
+				for (auto &node : models.scene->linearNodes) {
+					if (node->mesh) {
+						VkDescriptorSetAllocateInfo descriptorSetAllocInfo{};
+						descriptorSetAllocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+						descriptorSetAllocInfo.descriptorPool = descriptorPool;
+						descriptorSetAllocInfo.pSetLayouts = &descriptorSetLayouts.node;
+						descriptorSetAllocInfo.descriptorSetCount = 1;
+						VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &descriptorSetAllocInfo, &node->mesh->uniformBuffer.descriptorSet));
+
+						VkWriteDescriptorSet writeDescriptorSet{};
+						writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+						writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+						writeDescriptorSet.descriptorCount = 1;
+						writeDescriptorSet.dstSet = node->mesh->uniformBuffer.descriptorSet;
+						writeDescriptorSet.dstBinding = 0;
+						writeDescriptorSet.pBufferInfo = &node->mesh->uniformBuffer.descriptor;
+
+						vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
+					}
 				}
 			}
 
