@@ -135,6 +135,8 @@ public:
 		Buffer vertexBuffer;
 		Buffer indexBuffer;
 
+		bool collapsed = false;
+
 		struct PushConstBlock {
 			glm::vec2 scale;
 			glm::vec2 translate;
@@ -1740,6 +1742,9 @@ public:
 #endif
 
 		ImGuiStyle& style = ImGui::GetStyle();
+		style.WindowMinSize = ImVec2(5.0f, 5.0f);
+		style.WindowRounding = 0;
+		style.FrameRounding = 2;
 		style.Colors[ImGuiCol_TitleBg] = ImVec4(0.6f, 0.0f, 0.0f, 1.0f);
 		style.Colors[ImGuiCol_TitleBgActive] = ImVec4(0.6f, 0.0f, 0.0f, 1.0f);
 		style.Colors[ImGuiCol_TitleBgCollapsed] = ImVec4(0.6f, 0.0f, 0.0f, 0.1f);
@@ -1794,116 +1799,134 @@ public:
 		bool updateCBs = false;
 
 		ImGui::NewFrame();
-		ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0);
-		ImGui::SetNextWindowPos(ImVec2(width - sideBarWidth, 0));
-		ImGui::SetNextWindowSize(ImVec2(sideBarWidth, height), ImGuiSetCond_Always);
-		ImGui::Begin("Vulkan glTF 2.0 PBR", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-		ImGui::TextUnformatted("Vulkan glTF 2.0 PBR");
-		ImGui::Text("%.1d fps (%.2f ms)", lastFPS, (1000.0f / lastFPS));
-		
-		if (ui.header("Settings")) {
-			if (ui.checkbox("Background", &displayBackground)) {
-				updateCBs = true;
-			}
-			ui.text("Exposure");
-			if (ui.slider("##exposure", &uboParams.exposure, 0.1f, 10.0f)) {
-				updatePrms = true;
-			}
-			ui.text("Gamma");
-			if (ui.slider("##gamma", &uboParams.gamma, 0.1f, 4.0f)) {
-				updatePrms = true;
-			}
-			ui.text("IBL contribution");
-			if (ui.slider("##ibl", &uboParams.scaleIBLAmbient, 0.0f, 1.0f)) {
-				updatePrms = true;
-			}
-		}
 
-		if (ui.header("Components")) {
-			if (ui.checkbox("Base Color", &uboParams.scaleDiffBaseMR[1])) {
-				uboParams.scaleDiffBaseMR = glm::vec4(0.0f, uboParams.scaleDiffBaseMR[1], 0.0f, 0.0f);
-				uboParams.scaleFGDSpec = glm::vec4(0.0f);
-				updatePrms = true;
-			};
-			if (ui.checkbox("Metallic", &uboParams.scaleDiffBaseMR[2])) {
-				uboParams.scaleDiffBaseMR = glm::vec4(0.0f, 0.0f, uboParams.scaleDiffBaseMR[2], 0.0f);
-				uboParams.scaleFGDSpec = glm::vec4(0.0f);
-				updatePrms = true;
-			};
-			if (ui.checkbox("Roughness", &uboParams.scaleDiffBaseMR[3])) {
-				uboParams.scaleDiffBaseMR = glm::vec4(0.0f, 0.0f, 0.0f, uboParams.scaleDiffBaseMR[3]);
-				uboParams.scaleFGDSpec = glm::vec4(0.0f);
-				updatePrms = true;
-			};
-		}
-		
-		if (ui.header("PBR equation")) {
-			if (ui.checkbox("Diff(l,n)", &uboParams.scaleDiffBaseMR[0])) {
-				uboParams.scaleDiffBaseMR = glm::vec4(uboParams.scaleDiffBaseMR[0], 0.0f, 0.0f, 0.0f);
-				uboParams.scaleFGDSpec = glm::vec4(0.0f);
-				updatePrms = true;
-			};
-			if (ui.checkbox("F(l,h)", &uboParams.scaleFGDSpec[0])) {
-				uboParams.scaleDiffBaseMR = glm::vec4(0.0f);
-				uboParams.scaleFGDSpec = glm::vec4(uboParams.scaleFGDSpec[0], 0.0f, 0.0f, 0.0f);
-				updatePrms = true;
-			};
-			if (ui.checkbox("G(l,v,h)", &uboParams.scaleFGDSpec[1])) {
-				uboParams.scaleDiffBaseMR = glm::vec4(0.0f);
-				uboParams.scaleFGDSpec = glm::vec4(0.0f, uboParams.scaleFGDSpec[1], 0.0f, 0.0f);
-				updatePrms = true;
-			};
-			if (ui.checkbox("D(h)", &uboParams.scaleFGDSpec[2])) {
-				uboParams.scaleDiffBaseMR = glm::vec4(0.0f);
-				uboParams.scaleFGDSpec = glm::vec4(0.0f, 0.0f, uboParams.scaleFGDSpec[2], 0.0f);
-				updatePrms = true;
-			};
-			if (ui.checkbox("Specular", &uboParams.scaleFGDSpec[3])) {
-				uboParams.scaleDiffBaseMR = glm::vec4(0.0f);
-				uboParams.scaleFGDSpec = glm::vec4(0.0f, 0.0f, 0.0f, uboParams.scaleFGDSpec[3]);
-				updatePrms = true;
-			};
-		}
+		// Settings sidebar		
+		if (!ui.collapsed) {
+			ImGui::SetNextWindowPos(ImVec2(width - sideBarWidth, 0));
+			ImGui::SetNextWindowSize(ImVec2(sideBarWidth, height), ImGuiSetCond_Always);
+			ImGui::Begin("Vulkan glTF 2.0 PBR", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+			ImGui::TextUnformatted("Vulkan glTF 2.0 PBR");
+			ImGui::Text("%.1d fps (%.2f ms)", lastFPS, (1000.0f / lastFPS));
 
-		if (models.scene->animations.size() > 0) {
-			if (ui.header("Animations")) {
-				ui.checkbox("Animate", &animate);
-				std::vector<std::string> animationNames;
-				for (auto animation : models.scene->animations) {
-					animationNames.push_back(animation.name);
-				}
-				ui.text("Animation");
-				ui.combo("##animation", &animationIndex, animationNames);
-			}
-		}
-
-		if (ui.header("Scene")) {
-			if (ImGui::Button("Load gltf scene", ImVec2(ImGui::GetWindowWidth()-15, 25))) {
-				std::string filename;
-				if (openFile("glTF files\0*.gltf\0", filename)) {
-					vkDeviceWaitIdle(device);
-					loadScene(filename);
-					setupDescriptors();
+			if (ui.header("Settings")) {
+				if (ui.checkbox("Background", &displayBackground)) {
 					updateCBs = true;
 				}
-			}
-			if (ImGui::Button("Load env map", ImVec2(ImGui::GetWindowWidth()-15, 25))) {
-				std::string filename;
-				if (openFile("ktx textures\0*.ktx\0", filename)) {
-					vkDeviceWaitIdle(device);
-					loadEnvironment(filename);
-					setupDescriptors();
-					updateCBs = true;
+				ui.text("Exposure");
+				if (ui.slider("##exposure", &uboParams.exposure, 0.1f, 10.0f)) {
+					updatePrms = true;
+				}
+				ui.text("Gamma");
+				if (ui.slider("##gamma", &uboParams.gamma, 0.1f, 4.0f)) {
+					updatePrms = true;
+				}
+				ui.text("IBL contribution");
+				if (ui.slider("##ibl", &uboParams.scaleIBLAmbient, 0.0f, 1.0f)) {
+					updatePrms = true;
 				}
 			}
 
-			if (ui.checkbox("Flip UV", &uboMatrices.flipUV)) {
-				updatePrms = true;
-			};
+			if (ui.header("Components")) {
+				if (ui.checkbox("Base Color", &uboParams.scaleDiffBaseMR[1])) {
+					uboParams.scaleDiffBaseMR = glm::vec4(0.0f, uboParams.scaleDiffBaseMR[1], 0.0f, 0.0f);
+					uboParams.scaleFGDSpec = glm::vec4(0.0f);
+					updatePrms = true;
+				};
+				if (ui.checkbox("Metallic", &uboParams.scaleDiffBaseMR[2])) {
+					uboParams.scaleDiffBaseMR = glm::vec4(0.0f, 0.0f, uboParams.scaleDiffBaseMR[2], 0.0f);
+					uboParams.scaleFGDSpec = glm::vec4(0.0f);
+					updatePrms = true;
+				};
+				if (ui.checkbox("Roughness", &uboParams.scaleDiffBaseMR[3])) {
+					uboParams.scaleDiffBaseMR = glm::vec4(0.0f, 0.0f, 0.0f, uboParams.scaleDiffBaseMR[3]);
+					uboParams.scaleFGDSpec = glm::vec4(0.0f);
+					updatePrms = true;
+				};
+			}
+
+			if (ui.header("PBR equation")) {
+				if (ui.checkbox("Diff(l,n)", &uboParams.scaleDiffBaseMR[0])) {
+					uboParams.scaleDiffBaseMR = glm::vec4(uboParams.scaleDiffBaseMR[0], 0.0f, 0.0f, 0.0f);
+					uboParams.scaleFGDSpec = glm::vec4(0.0f);
+					updatePrms = true;
+				};
+				if (ui.checkbox("F(l,h)", &uboParams.scaleFGDSpec[0])) {
+					uboParams.scaleDiffBaseMR = glm::vec4(0.0f);
+					uboParams.scaleFGDSpec = glm::vec4(uboParams.scaleFGDSpec[0], 0.0f, 0.0f, 0.0f);
+					updatePrms = true;
+				};
+				if (ui.checkbox("G(l,v,h)", &uboParams.scaleFGDSpec[1])) {
+					uboParams.scaleDiffBaseMR = glm::vec4(0.0f);
+					uboParams.scaleFGDSpec = glm::vec4(0.0f, uboParams.scaleFGDSpec[1], 0.0f, 0.0f);
+					updatePrms = true;
+				};
+				if (ui.checkbox("D(h)", &uboParams.scaleFGDSpec[2])) {
+					uboParams.scaleDiffBaseMR = glm::vec4(0.0f);
+					uboParams.scaleFGDSpec = glm::vec4(0.0f, 0.0f, uboParams.scaleFGDSpec[2], 0.0f);
+					updatePrms = true;
+				};
+				if (ui.checkbox("Specular", &uboParams.scaleFGDSpec[3])) {
+					uboParams.scaleDiffBaseMR = glm::vec4(0.0f);
+					uboParams.scaleFGDSpec = glm::vec4(0.0f, 0.0f, 0.0f, uboParams.scaleFGDSpec[3]);
+					updatePrms = true;
+				};
+			}
+
+			if (models.scene->animations.size() > 0) {
+				if (ui.header("Animations")) {
+					ui.checkbox("Animate", &animate);
+					std::vector<std::string> animationNames;
+					for (auto animation : models.scene->animations) {
+						animationNames.push_back(animation.name);
+					}
+					ui.text("Animation");
+					ui.combo("##animation", &animationIndex, animationNames);
+				}
+			}
+
+			if (ui.header("Scene")) {
+				if (ImGui::Button("Load gltf scene", ImVec2(ImGui::GetWindowWidth() - 15, 25))) {
+					std::string filename;
+					if (openFile("glTF files\0*.gltf\0", filename)) {
+						vkDeviceWaitIdle(device);
+						loadScene(filename);
+						setupDescriptors();
+						updateCBs = true;
+					}
+				}
+				if (ImGui::Button("Load env map", ImVec2(ImGui::GetWindowWidth() - 15, 25))) {
+					std::string filename;
+					if (openFile("ktx textures\0*.ktx\0", filename)) {
+						vkDeviceWaitIdle(device);
+						loadEnvironment(filename);
+						setupDescriptors();
+						updateCBs = true;
+					}
+				}
+
+				if (ui.checkbox("Flip UV", &uboMatrices.flipUV)) {
+					updatePrms = true;
+				};
+			}
+			ImGui::End();
 		}
-	
+
+		// UI toggle pane
+		const float left = width - (ui.collapsed ? 0 : sideBarWidth) - 15;
+		ImGui::SetNextWindowPos(ImVec2(left, 0));
+		ImGui::SetNextWindowSize(ImVec2(15, height), ImGuiSetCond_Always);
+		ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+		ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, ui.collapsed ? 0.2f : 0.4f));
+		ImGui::Begin("", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+		ImGui::SetCursorScreenPos(ImVec2(left, (float)height / 2.0f - 25.0f));
+		if (ImGui::Button(ui.collapsed ? "<" : ">", ImVec2(15, 50))) {
+			ui.collapsed = !ui.collapsed;
+			updateCBs = true;
+		}
 		ImGui::End();
+		ImGui::PopStyleColor();
 		ImGui::PopStyleVar();
+
 		ImGui::Render();
 
 		ImDrawData* imDrawData = ImGui::GetDrawData();
@@ -1940,8 +1963,8 @@ public:
 			ImDrawIdx* idxDst = (ImDrawIdx*)ui.indexBuffer.mapped;
 			for (int n = 0; n < imDrawData->CmdListsCount; n++) {
 				const ImDrawList* cmd_list = imDrawData->CmdLists[n];
-				memcpy((ImDrawVert*)ui.vertexBuffer.mapped, cmd_list->VtxBuffer.Data, cmd_list->VtxBuffer.Size * sizeof(ImDrawVert));
-				memcpy((ImDrawIdx*)ui.indexBuffer.mapped, cmd_list->IdxBuffer.Data, cmd_list->IdxBuffer.Size * sizeof(ImDrawIdx));
+				memcpy(vtxDst, cmd_list->VtxBuffer.Data, cmd_list->VtxBuffer.Size * sizeof(ImDrawVert));
+				memcpy(idxDst, cmd_list->IdxBuffer.Data, cmd_list->IdxBuffer.Size * sizeof(ImDrawIdx));
 				vtxDst += cmd_list->VtxBuffer.Size;
 				idxDst += cmd_list->IdxBuffer.Size;
 			}
