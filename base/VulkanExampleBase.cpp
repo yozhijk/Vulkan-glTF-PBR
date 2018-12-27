@@ -8,6 +8,8 @@
 
 #include "VulkanExampleBase.h"
 
+#define _VALIDATION
+
 std::vector<const char*> VulkanExampleBase::args;
 
 VKAPI_ATTR VkBool32 VKAPI_CALL debugMessageCallback(VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT objType, uint64_t srcObject, size_t location, int32_t msgCode, const char * pLayerPrefix, const char * pMsg, void * pUserData)
