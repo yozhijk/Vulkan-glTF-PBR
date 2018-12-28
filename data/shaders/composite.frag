@@ -7,12 +7,16 @@ layout(binding = 1) uniform sampler2D upscaledTexture;
 
 void main()
 {
-	if (inUV.x < 0.5)
+	if (inUV.x < 0.499)
 	{
 		outColor = vec4(texture(offscreenTexture, inUV));
 	}
-	else
+	else if (inUV.x > 0.501)
 	{
 		outColor = vec4(texture(upscaledTexture, inUV));
+	}
+	else
+	{
+                outColor = vec4(1.0, 0.0, 0.0, 1.0);
 	}
 }

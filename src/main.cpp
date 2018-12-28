@@ -36,6 +36,14 @@
 #include "tiny_gltf.h"
 #include "stb_image_write.h"
 
+#include "radeonml.h"
+
+template <typename T> T clamp(T v, T a, T b)
+{
+	return v < a ? (a) : ((v > b) ? (b):(v));
+}
+
+
 /*
 	PBR example main class
 */
@@ -127,6 +135,8 @@ public:
 	std::vector<vks::Texture2D> readbackTextures;
 	std::vector<vks::Texture2D> writeoutTextures;
 	std::vector<vks::Texture2D> upscaledTextures;
+	std::vector<std::uint8_t> readbackPixels;
+	std::vector<std::uint8_t> writeoutPixels;
 
 	std::vector<VkFence> waitFences;
 	std::vector<VkSemaphore> renderCompleteSemaphores;
@@ -135,6 +145,13 @@ public:
 	std::vector<VkSemaphore> readbackCompleteSemaphores;
 	std::vector<VkSemaphore> writeoutCompleteSemaphores;
 	std::vector<FramebufferTexture> offscreenFramebuffers;
+
+	ml_context mlContext;
+	ml_image mlInputImage;
+	ml_image mlOutputImage;
+	ml_model mlModel;
+	bool inferenceRequested = false;
+	bool inferenceFinished = true;
 
 	const uint32_t renderAhead = 2;
 	uint32_t frameIndex = 0;
@@ -187,6 +204,27 @@ public:
 	VulkanExample() : VulkanExampleBase()
 	{
 		title = "Vulkan glTF 2.0 PBR";
+		mlContext = mlCreateContext();
+
+		ml_model_params modelParams =
+		{
+			"esrgan-05x3x32-198135.pb",
+			nullptr,
+			nullptr,
+			0.5f,
+			nullptr
+		};
+
+		mlModel = mlCreateModel(mlContext, &modelParams);
+
+		ml_image_info inputInfo, outputInfo;
+		mlGetModelInfo(mlModel, &inputInfo, &outputInfo);
+
+		inputInfo.width = width >> 1;
+		inputInfo.height = height >> 1;
+		mlSetModelInputInfo(mlModel, &inputInfo);
+
+		mlGetModelInfo(mlModel, &inputInfo, &outputInfo);
 	}
 
 	~VulkanExample()
@@ -251,6 +289,10 @@ public:
 		}
 
 		delete ui;
+
+		mlReleaseImage(mlInputImage);
+		mlReleaseImage(mlOutputImage);
+		mlReleaseContext(mlContext);
 	}
 
 	void renderNode(vkglTF::Node *node, uint32_t cbIndex, vkglTF::Material::AlphaMode alphaMode) {
@@ -887,7 +929,7 @@ public:
 				VkDescriptorImageInfo imageInfo[] =
 				{
 					{textures.lutBrdf.sampler, offscreenFramebuffers[i].view[FramebufferTexture::FB_COMPONENT_COLOR], VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
-					{textures.lutBrdf.sampler, upscaledTextures[i].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
+					{textures.lutBrdf.sampler, upscaledTextures[0].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL},
 				};
 
 				VkWriteDescriptorSet writeDescriptorSet;
@@ -1448,27 +1490,51 @@ public:
 		}
 
 		char* data;
-		auto w = width >> 1;
-		auto h = height >> 1;
-		std::vector<char> pixels(w * h * 4);
+		auto halfWidth = width >> 1;
+		auto halfHeight = height >> 1;
 		VK_CHECK_RESULT(vkMapMemory(device, readbackTextures[index].deviceMemory, 0, VK_WHOLE_SIZE, 0, (void**)&data));
-		memcpy(pixels.data(), data, 4 * sizeof(char) * w * h);
-
-		//std::ofstream ofs( "out.raw", std::ostream::binary);
-		//ofs.write( (char*)data, width * height * sizeof(char) * 4 );
+		memcpy(readbackPixels.data(), data, 4 * sizeof(std::uint8_t) * halfWidth * halfHeight);
 		vkUnmapMemory(device, readbackTextures[index].deviceMemory);
 
-		//stbi_write_jpg("out.jpg", w, h, 4, pixels.data(), 100);
+
+		std::size_t imageSize;
+		auto mlImageData = (float*)mlMapImage(mlInputImage, &imageSize);
+
+		for (auto i = 0; i < halfWidth * halfHeight; ++i)
+		{
+			mlImageData[3 * i] = (float)readbackPixels[4 * i + 2] / 255.f;
+			mlImageData[3 * i + 1] = (float)readbackPixels[4 * i + 1] / 255.f;
+			mlImageData[3 * i + 2] = (float)readbackPixels[4 * i] / 255.f;
+
+			//std::swap(readbackPixels[4 * i + 2], readbackPixels[4 * i]);
+		}
+
+		mlUnmapImage(mlInputImage, mlImageData);
+
+		//stbi_write_jpg("out1.jpg", halfWidth, halfHeight, 4, readbackPixels.data(), 100);
+
+
+		auto status = mlInfer(mlModel, mlInputImage, mlOutputImage);
+
+		if (status != ML_OK)
+		{
+			std::cout << "Inference error\n";
+		}
 
 		VK_CHECK_RESULT(vkMapMemory(device, writeoutTextures[index].deviceMemory, 0, VK_WHOLE_SIZE, 0, (void**)&data));
 
+		mlImageData = (float*)mlMapImage(mlOutputImage, &imageSize);
+
 		for (auto i = 0; i < width * height; ++i)
 		{
-			data[4 * i] = 255;
-			data[4 * i + 1] = 0;
-			data[4 * i + 2] = 0;
-			data[4 * i + 3] = 0;
+			data[4 * i] = char(clamp(mlImageData[3 * i + 2], 0.f, 1.f) * 255);
+			data[4 * i + 1] = char(clamp(mlImageData[3 * i + 1], 0.f, 1.f) * 255);
+			data[4 * i + 2] = char(clamp(mlImageData[3 * i], 0.f, 1.f) * 255);
+			data[4 * i + 3] = 255;
 		}
+
+		mlUnmapImage(mlOutputImage, mlImageData);
+
 
 		vkUnmapMemory(device, writeoutTextures[index].deviceMemory);
 
@@ -2239,11 +2305,37 @@ public:
 		updateOverlay();
 	}
 
+	void createMLImages()
+	{
+		ml_image_info inputInfo
+		{
+			ML_FLOAT32,
+			width >> 1,
+			height >> 1,
+			3
+		};
+
+		mlInputImage = mlCreateImage(mlContext, &inputInfo);
+
+		ml_image_info outputInfo
+		{
+			ML_FLOAT32,
+			width,
+			height,
+			3
+		};
+
+		mlOutputImage = mlCreateImage(mlContext, &outputInfo);
+
+	}
+
 	void createUpscaledTextures()
 	{
 		const VkFormat format = swapChain.colorFormat;
 
 		upscaledTextures.resize(swapChain.images.size());
+
+		writeoutPixels.resize(width * height);
 
 		for (auto& texture : upscaledTextures)
 		{
@@ -2304,6 +2396,11 @@ public:
 		readbackTextures.resize(swapChain.images.size());
 		writeoutTextures.resize(swapChain.images.size());
 
+		auto halfWidth = width >> 1;
+		auto halfHeight = height >> 1;
+
+		readbackPixels.resize(halfWidth * halfHeight * 4);
+
 		for (auto& texture : readbackTextures)
 		{
 			// Image
@@ -2311,8 +2408,8 @@ public:
 			imageCI.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
 			imageCI.imageType = VK_IMAGE_TYPE_2D;
 			imageCI.format = format;
-			imageCI.extent.width = width >> 1;
-			imageCI.extent.height = height >> 1;
+			imageCI.extent.width = halfWidth;
+			imageCI.extent.height = halfHeight;
 			imageCI.extent.depth = 1;
 			imageCI.mipLevels = 1;
 			imageCI.arrayLayers = 1;
@@ -2478,6 +2575,7 @@ public:
 		createOffscreenFramebuffers();
 		createStagingTextures();
 		createUpscaledTextures();
+		createMLImages();
 		generateBRDFLUT();
 		generateCubemaps();
 		prepareUniformBuffers();
@@ -2623,6 +2721,12 @@ public:
 					updateCBs = true;
 				}
 			}
+
+			if (ui->button("Infer"))
+			{
+				inferenceFinished = false;
+				inferenceRequested = true;
+			}
 		}
 
 		ImGui::End();
@@ -2731,7 +2835,7 @@ public:
 		submitInfo.commandBufferCount = 1;
 		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, waitFences[frameIndex]));
 
-		if (true)
+		if (inferenceRequested)
 		{
 			VK_CHECK_RESULT(vkQueueWaitIdle(queue));
 
@@ -2739,23 +2843,30 @@ public:
 			submitInfo.waitSemaphoreCount = 0;
 			submitInfo.pSignalSemaphores = nullptr;
 			submitInfo.signalSemaphoreCount = 0;
-			submitInfo.pCommandBuffers = &readbackCommandBuffers[currentBuffer];
+			submitInfo.pCommandBuffers = &readbackCommandBuffers[0];
 			submitInfo.commandBufferCount = 1;
 			VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
-
 			VK_CHECK_RESULT(vkQueueWaitIdle(queue));
 
-			runInference(currentBuffer);
+			auto startTime = std::chrono::high_resolution_clock::now();
+			runInference(0);
+			auto delta = std::chrono::high_resolution_clock::now() - startTime;
+
+			float ms = std::chrono::duration_cast<std::chrono::milliseconds>(delta).count();
+
+			std::cout << "Inference took " << ms / 1000.f << "s";
 
 			submitInfo.pWaitSemaphores = nullptr;
 			submitInfo.waitSemaphoreCount = 0;
 			submitInfo.pSignalSemaphores = nullptr;
 			submitInfo.signalSemaphoreCount = 0;
-			submitInfo.pCommandBuffers = &writeoutCommandBuffers[currentBuffer];
+			submitInfo.pCommandBuffers = &writeoutCommandBuffers[0];
 			submitInfo.commandBufferCount = 1;
 			VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
-
 			VK_CHECK_RESULT(vkQueueWaitIdle(queue));
+
+			inferenceFinished = true;
+			inferenceRequested = false;
 		}
 
 		VkResult present = swapChain.queuePresent(queue, currentBuffer, compositeCompleteSemaphores[frameIndex]);

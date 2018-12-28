@@ -313,12 +313,14 @@ void VulkanExampleBase::prepare()
 void VulkanExampleBase::renderFrame()
 {
 	auto tStart = std::chrono::high_resolution_clock::now();
+
+	render();
+
 	if (viewUpdated)
 	{
 		viewUpdated = false;
 	}
 
-	render();
 	frameCounter++;
 	auto tEnd = std::chrono::high_resolution_clock::now();
 	auto tDiff = std::chrono::duration<double, std::milli>(tEnd - tStart).count();
@@ -328,6 +330,7 @@ void VulkanExampleBase::renderFrame()
 	{
 		viewUpdated = true;
 	}
+
 	fpsTimer += (float)tDiff;
 	if (fpsTimer > 1000.0f)
 	{
@@ -815,7 +818,7 @@ HWND VulkanExampleBase::setupWindow(HINSTANCE hinstance, WNDPROC wndproc)
 
 	DWORD dwExStyle;
 	DWORD dwStyle;
-
+	
 	if (settings.fullscreen) {
 		dwExStyle = WS_EX_APPWINDOW;
 		dwStyle = WS_POPUP | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
