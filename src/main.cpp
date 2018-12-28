@@ -36,7 +36,7 @@
 #include "tiny_gltf.h"
 #include "stb_image_write.h"
 
-#include "radeonml.h"
+#include "RadeonProML.h"
 
 template <typename T> T clamp(T v, T a, T b)
 {
@@ -208,9 +208,9 @@ public:
 
 		ml_model_params modelParams =
 		{
-			"esrgan-05x3x32-198135.pb",
-			nullptr,
-			nullptr,
+			"/storage/sisr/models/esrgan-05x3x32-198135.pb",
+			"Generator/inputs",
+			"Generator/outputs",
 			0.5f,
 			nullptr
 		};
@@ -442,6 +442,27 @@ public:
 			VkCommandBuffer currentCB = compositeCommandBuffers[i];
 
 			VK_CHECK_RESULT(vkBeginCommandBuffer(currentCB, &cmdBufferBeginInfo));
+
+			{
+				VkImageMemoryBarrier imageMemoryBarrier =
+				{
+					VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+					NULL,
+					VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+					VK_ACCESS_SHADER_READ_BIT,
+					VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+					VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+					VK_QUEUE_FAMILY_IGNORED,
+					VK_QUEUE_FAMILY_IGNORED,
+					offscreenFramebuffers[i].image[FramebufferTexture::FB_COMPONENT_COLOR],
+					VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+				};
+
+				vkCmdPipelineBarrier(currentCB, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0,
+					0, NULL, 0, NULL, 1, &imageMemoryBarrier);
+			}
+
+
 			vkCmdBeginRenderPass(currentCB, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
 			VkViewport viewport{};
@@ -465,6 +486,26 @@ public:
 			ui->draw(currentCB);
 
 			vkCmdEndRenderPass(currentCB);
+
+			{
+				VkImageMemoryBarrier imageMemoryBarrier =
+				{
+					VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+					NULL,
+					VK_ACCESS_SHADER_READ_BIT,
+					VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+					VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+					VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+					VK_QUEUE_FAMILY_IGNORED,
+					VK_QUEUE_FAMILY_IGNORED,
+					offscreenFramebuffers[i].image[FramebufferTexture::FB_COMPONENT_COLOR],
+					VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+				};
+
+				vkCmdPipelineBarrier(currentCB, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0,
+					0, NULL, 0, NULL, 1, &imageMemoryBarrier);
+			}
+
 			VK_CHECK_RESULT(vkEndCommandBuffer(currentCB));
 		}
 
@@ -1518,7 +1559,10 @@ public:
 
 		if (status != ML_OK)
 		{
-			std::cout << "Inference error\n";
+			std::vector<char> buffer(1024);
+			mlGetModelError(mlModel, buffer.data(), buffer.size());
+
+			std::cout << "Inference error: " << std::string(buffer.cbegin(), buffer.cend()) << "\n";
 		}
 
 		VK_CHECK_RESULT(vkMapMemory(device, writeoutTextures[index].deviceMemory, 0, VK_WHOLE_SIZE, 0, (void**)&data));

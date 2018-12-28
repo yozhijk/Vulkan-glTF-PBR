@@ -11,6 +11,7 @@ include_directories(external/glm)
 include_directories(external/gli)
 include_directories(external/imgui)
 include_directories(base)
+include_directories(libs/radeonml/inc)
 
 OPTION(USE_D2D_WSI "Build the project using Direct to Display swapchain" OFF)
 OPTION(USE_WAYLAND_WSI "Build the project using Wayland swapchain" OFF)
